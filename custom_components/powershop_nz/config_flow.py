@@ -3,10 +3,10 @@ from __future__ import annotations
 import voluptuous as vol
 
 from homeassistant import config_entries
-from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResult
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .client import PowershopClient, PowershopError
+from .client import PowershopClient
 from .const import (
     CONF_CONSUMER_ID,
     CONF_COOKIE,
@@ -34,7 +34,7 @@ class PowershopNZConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
             try:
                 client = PowershopClient(
-                    session=self.hass.helpers.aiohttp_client.async_get_clientsession(self.hass),
+                    session=async_get_clientsession(self.hass),
                     cookie=cookie or None,
                     email=email or None,
                     password=password or None,

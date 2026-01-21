@@ -1,0 +1,24 @@
+{
+  "title": "Powershop NZ",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to Powershop NZ",
+        "description": "Paste your browser Cookie header (recommended), or provide email/password.",
+        "data": {
+          "cookie": "Cookie header",
+          "email": "Email",
+          "password": "Password",
+          "customer_id": "Customer ID (optional)",
+          "consumer_id": "Consumer ID (optional)",
+          "usage_scale": "Usage scale",
+          "usage_days": "Usage window (days)"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Could not connect/authenticate. Try cookie auth."
+    }
+  }
+}
+
