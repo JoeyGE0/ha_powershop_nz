@@ -3,10 +3,11 @@ from __future__ import annotations
 from datetime import date, timedelta
 from typing import Any, Optional
 
-from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
+from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
@@ -22,6 +23,7 @@ async def async_setup_entry(
     async_add_entities(
         [
             PowershopBalanceSensor(coordinator, entry),
+            PowershopEnergyTotalIncreasingSensor(coordinator, entry),
             PowershopUsageKwhSensor(coordinator, entry),
             PowershopUsageTodayKwhSensor(coordinator, entry),
             PowershopUsageYesterdayKwhSensor(coordinator, entry),
@@ -82,9 +84,92 @@ class PowershopBalanceSensor(PowershopBaseSensor):
         return float(self.coordinator.data.balance_nzd)
 
 
+class PowershopEnergyTotalIncreasingSensor(PowershopBaseSensor, RestoreEntity):
+    """
+    Cumulative kWh sensor (total_increasing) for Home Assistant Energy dashboard.
+
+    We only have day-level totals from the provider, not a true meter register.
+    This sensor persists a running total and increments it when new daily records
+    appear (based on record date).
+    """
+
+    _attr_name = "Energy total (since install)"
+    _attr_device_class = SensorDeviceClass.ENERGY
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+    _attr_native_unit_of_measurement = "kWh"
+
+    def __init__(self, coordinator: PowershopCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._total_kwh: Optional[float] = None
+        self._last_date: Optional[date] = None
+
+    @property
+    def unique_id(self) -> str:
+        return f"{self._entry.entry_id}_energy_total_increasing_kwh"
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        last_state = await self.async_get_last_state()
+        if last_state and last_state.state not in (None, "unknown", "unavailable"):
+            try:
+                self._total_kwh = float(last_state.state)
+            except ValueError:
+                self._total_kwh = None
+            last_date_str = (last_state.attributes or {}).get("last_record_date")
+            if last_date_str:
+                try:
+                    self._last_date = date.fromisoformat(last_date_str)
+                except ValueError:
+                    self._last_date = None
+
+        # If nothing restored, initialize from current window so it's non-zero and useful.
+        if self._total_kwh is None:
+            records = self.coordinator.data.usage_records or []
+            vals = [r.kwh for r in records if getattr(r, "kwh", None) is not None]
+            self._total_kwh = float(sum(vals)) if vals else 0.0
+            self._last_date = _last_record_date(records)
+
+    def _handle_coordinator_update(self) -> None:
+        records = self.coordinator.data.usage_records or []
+        if not records:
+            return super()._handle_coordinator_update()
+
+        # Ensure initialized
+        if self._total_kwh is None:
+            vals = [r.kwh for r in records if getattr(r, "kwh", None) is not None]
+            self._total_kwh = float(sum(vals)) if vals else 0.0
+            self._last_date = _last_record_date(records)
+            return super()._handle_coordinator_update()
+
+        last_date = self._last_date
+        # Increment for new dates only
+        for r in records:
+            if getattr(r, "kwh", None) is None:
+                continue
+            if last_date is not None and r.when <= last_date:
+                continue
+            self._total_kwh += float(r.kwh)
+            last_date = r.when
+
+        self._last_date = last_date
+        return super()._handle_coordinator_update()
+
+    @property
+    def native_value(self) -> Optional[float]:
+        return self._total_kwh
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        attrs: dict[str, Any] = {}
+        if self._last_date:
+            attrs["last_record_date"] = self._last_date.isoformat()
+        return attrs
+
+
 class PowershopUsageKwhSensor(PowershopBaseSensor):
     _attr_name = "Usage (window)"
     _attr_device_class = SensorDeviceClass.ENERGY
+    _attr_state_class = SensorStateClass.TOTAL
     _attr_native_unit_of_measurement = "kWh"
 
     @property
@@ -117,6 +202,7 @@ class PowershopUsageKwhSensor(PowershopBaseSensor):
 class PowershopUsageTodayKwhSensor(PowershopBaseSensor):
     _attr_name = "Usage (today)"
     _attr_device_class = SensorDeviceClass.ENERGY
+    _attr_state_class = SensorStateClass.TOTAL
     _attr_native_unit_of_measurement = "kWh"
 
     @property
@@ -146,6 +232,7 @@ class PowershopUsageTodayKwhSensor(PowershopBaseSensor):
 class PowershopUsageYesterdayKwhSensor(PowershopBaseSensor):
     _attr_name = "Usage (yesterday)"
     _attr_device_class = SensorDeviceClass.ENERGY
+    _attr_state_class = SensorStateClass.TOTAL
     _attr_native_unit_of_measurement = "kWh"
 
     @property
@@ -224,6 +311,7 @@ class PowershopCostLastRecordSensor(PowershopBaseSensor):
 class PowershopUsageWeekToDateKwhSensor(PowershopBaseSensor):
     _attr_name = "Usage (week to date)"
     _attr_device_class = SensorDeviceClass.ENERGY
+    _attr_state_class = SensorStateClass.TOTAL
     _attr_native_unit_of_measurement = "kWh"
 
     @property
@@ -252,6 +340,7 @@ class PowershopUsageWeekToDateKwhSensor(PowershopBaseSensor):
 class PowershopUsageMonthToDateKwhSensor(PowershopBaseSensor):
     _attr_name = "Usage (month to date)"
     _attr_device_class = SensorDeviceClass.ENERGY
+    _attr_state_class = SensorStateClass.TOTAL
     _attr_native_unit_of_measurement = "kWh"
 
     @property
@@ -280,6 +369,7 @@ class PowershopUsageMonthToDateKwhSensor(PowershopBaseSensor):
 class PowershopUsageRolling30dKwhSensor(PowershopBaseSensor):
     _attr_name = "Usage (rolling 30d)"
     _attr_device_class = SensorDeviceClass.ENERGY
+    _attr_state_class = SensorStateClass.TOTAL
     _attr_native_unit_of_measurement = "kWh"
 
     @property
