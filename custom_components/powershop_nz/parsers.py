@@ -21,6 +21,9 @@ def _to_float(s: str) -> Optional[float]:
     s = s.replace(",", "")
     s = s.replace("$", "")
     s = s.replace("NZD", "").strip()
+    # common unit suffixes
+    s = re.sub(r"\bkwh\b", "", s, flags=re.I).strip()
+    s = re.sub(r"\bkw\s*h\b", "", s, flags=re.I).strip()
     try:
         return float(s)
     except ValueError:
@@ -66,19 +69,37 @@ def _guess_columns(headers: List[str]) -> Tuple[Optional[str], Optional[str], Op
     cost_col = None
 
     for h, lh in zip(headers, lowered):
-        if lh in ("date", "day", "period", "start", "end") or "date" in lh:
+        if lh in ("date", "day", "period", "start") or "date" in lh:
             date_col = h
             break
+    # If no explicit date, accept end as fallback
+    if date_col is None:
+        for h, lh in zip(headers, lowered):
+            if lh == "end":
+                date_col = h
+                break
 
     for h, lh in zip(headers, lowered):
         if "kwh" in lh or lh in ("usage", "energy", "consumption"):
             kwh_col = h
             break
+    # Powershop CSV can use "Average daily use" without 'kWh' in the header
+    if kwh_col is None:
+        for h, lh in zip(headers, lowered):
+            if "use" in lh and "estimate" not in lh and "cost" not in lh:
+                kwh_col = h
+                break
 
     for h, lh in zip(headers, lowered):
         if "cost" in lh or "price" in lh or "$" in lh or "nzd" in lh:
             cost_col = h
             break
+    # Some exports label cost column as "Estimate"
+    if cost_col is None:
+        for h, lh in zip(headers, lowered):
+            if lh == "estimate":
+                cost_col = h
+                break
 
     if headers and date_col is None:
         date_col = headers[0]
