@@ -11,6 +11,7 @@ from .const import (
     CONF_CUSTOMER_ID,
     CONF_EMAIL,
     CONF_PASSWORD,
+    CONF_SCAN_INTERVAL_MIN,
     CONF_USAGE_DAYS,
     CONF_USAGE_SCALE,
     DEFAULT_SCAN_INTERVAL_MIN,
@@ -34,7 +35,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     usage_scale = options.get(CONF_USAGE_SCALE, data.get(CONF_USAGE_SCALE))
     usage_days = int(options.get(CONF_USAGE_DAYS, data.get(CONF_USAGE_DAYS, 7)))
-    scan_min = int(options.get("scan_interval_min", DEFAULT_SCAN_INTERVAL_MIN))
+    scan_min = int(options.get(CONF_SCAN_INTERVAL_MIN, DEFAULT_SCAN_INTERVAL_MIN))
 
     coordinator = PowershopCoordinator(
         hass,

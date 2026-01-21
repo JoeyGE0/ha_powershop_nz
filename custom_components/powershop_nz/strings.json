@@ -33,10 +33,29 @@
     "step": {
       "init": {
         "title": "Powershop NZ options",
-        "description": "Adjust usage settings.",
+        "description": "What do you want to change?",
+        "menu_options": {
+          "settings": "Update settings",
+          "auth": "Reconfigure login"
+        }
+      },
+      "settings": {
+        "title": "Update settings",
+        "description": "Polling and usage settings.",
         "data": {
+          "scan_interval_min": "Update interval (minutes)",
           "usage_scale": "Usage scale",
           "usage_days": "Usage window (days)"
+        }
+      },
+      "auth": {
+        "title": "Reconfigure login",
+        "description": "Update how the integration authenticates.",
+        "data": {
+          "auth_method": "Authentication method",
+          "email": "Email",
+          "password": "Password",
+          "cookie": "Cookie header"
         }
       }
     }

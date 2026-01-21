@@ -14,8 +14,10 @@ from .const import (
     CONF_COOKIE,
     CONF_EMAIL,
     CONF_PASSWORD,
+    CONF_SCAN_INTERVAL_MIN,
     CONF_USAGE_DAYS,
     CONF_USAGE_SCALE,
+    DEFAULT_SCAN_INTERVAL_MIN,
     DEFAULT_USAGE_DAYS,
     DEFAULT_USAGE_SCALE,
     DOMAIN,
@@ -109,12 +111,22 @@ class PowershopNZOptionsFlow(config_entries.OptionsFlow):
         self.config_entry = config_entry
 
     async def async_step_init(self, user_input=None):
+        # Menu keeps the options UI tidy and avoids a massive form.
+        return self.async_show_menu(
+            step_id="init",
+            menu_options=["settings", "auth"],
+        )
+
+    async def async_step_settings(self, user_input=None):
         if user_input is not None:
             return self.async_create_entry(title="", data=user_input)
 
-        # Keep options minimal: usage window & scale only (advanced IDs can be added later if needed)
         schema = vol.Schema(
             {
+                vol.Optional(
+                    CONF_SCAN_INTERVAL_MIN,
+                    default=self.config_entry.options.get(CONF_SCAN_INTERVAL_MIN, DEFAULT_SCAN_INTERVAL_MIN),
+                ): vol.Coerce(int),
                 vol.Optional(
                     CONF_USAGE_SCALE,
                     default=self.config_entry.options.get(CONF_USAGE_SCALE, DEFAULT_USAGE_SCALE),
@@ -126,5 +138,67 @@ class PowershopNZOptionsFlow(config_entries.OptionsFlow):
             }
         )
 
-        return self.async_show_form(step_id="init", data_schema=schema)
+        return self.async_show_form(step_id="settings", data_schema=schema)
+
+    async def async_step_auth(self, user_input=None):
+        errors = {}
+
+        if user_input is not None:
+            method = user_input.get(CONF_AUTH_METHOD)
+            new_data = dict(self.config_entry.data)
+
+            try:
+                if method == AUTH_METHOD_COOKIE:
+                    cookie = user_input.get(CONF_COOKIE) or ""
+                    client = PowershopClient(
+                        session=async_get_clientsession(self.hass),
+                        cookie=cookie,
+                        email=None,
+                        password=None,
+                        customer_id=None,
+                        consumer_id=None,
+                    )
+                    await client.login_if_needed()
+                    _ = await client.fetch_balance_nzd(customer_id=None)
+                    new_data.update({CONF_AUTH_METHOD: AUTH_METHOD_COOKIE, CONF_COOKIE: cookie})
+                    new_data.pop(CONF_EMAIL, None)
+                    new_data.pop(CONF_PASSWORD, None)
+                else:
+                    email = user_input.get(CONF_EMAIL) or ""
+                    password = user_input.get(CONF_PASSWORD) or ""
+                    client = PowershopClient(
+                        session=async_get_clientsession(self.hass),
+                        cookie=None,
+                        email=email,
+                        password=password,
+                        customer_id=None,
+                        consumer_id=None,
+                    )
+                    await client.login_if_needed()
+                    _ = await client.fetch_balance_nzd(customer_id=None)
+                    new_data.update(
+                        {CONF_AUTH_METHOD: AUTH_METHOD_EMAIL_PASSWORD, CONF_EMAIL: email, CONF_PASSWORD: password}
+                    )
+                    new_data.pop(CONF_COOKIE, None)
+            except Exception:
+                errors["base"] = "cannot_connect"
+            else:
+                # Update the config entry data in-place (this is the "reconfigure" people expect).
+                self.hass.config_entries.async_update_entry(self.config_entry, data=new_data)
+                return self.async_create_entry(title="", data=dict(self.config_entry.options))
+
+        # Defaults from current config entry
+        current_method = self.config_entry.data.get(CONF_AUTH_METHOD, AUTH_METHOD_EMAIL_PASSWORD)
+        schema = vol.Schema(
+            {
+                vol.Required(CONF_AUTH_METHOD, default=current_method): vol.In(
+                    [AUTH_METHOD_EMAIL_PASSWORD, AUTH_METHOD_COOKIE]
+                ),
+                vol.Optional(CONF_EMAIL, default=self.config_entry.data.get(CONF_EMAIL, "")): str,
+                vol.Optional(CONF_PASSWORD, default=self.config_entry.data.get(CONF_PASSWORD, "")): str,
+                vol.Optional(CONF_COOKIE, default=self.config_entry.data.get(CONF_COOKIE, "")): str,
+            }
+        )
+
+        return self.async_show_form(step_id="auth", data_schema=schema, errors=errors)
 

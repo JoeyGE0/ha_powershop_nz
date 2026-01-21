@@ -8,6 +8,7 @@ CONF_CUSTOMER_ID = "customer_id"
 CONF_CONSUMER_ID = "consumer_id"
 CONF_USAGE_SCALE = "usage_scale"
 CONF_USAGE_DAYS = "usage_days"
+CONF_SCAN_INTERVAL_MIN = "scan_interval_min"
 
 AUTH_METHOD_EMAIL_PASSWORD = "email_password"
 AUTH_METHOD_COOKIE = "cookie"
