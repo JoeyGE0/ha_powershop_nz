@@ -19,6 +19,14 @@ from .parsers import (
 
 BASE_URL = "https://secure.powershop.co.nz"
 
+DEFAULT_HEADERS = {
+    # Powershop serves different HTML based on user-agent/accept headers.
+    # Use browser-like defaults so we reliably get the login form HTML.
+    "User-Agent": "Mozilla/5.0 (HomeAssistant; powershop_nz)",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-NZ,en;q=0.9",
+}
+
 
 class PowershopError(RuntimeError):
     pass
@@ -53,7 +61,7 @@ class PowershopClient:
         return path if path.startswith("http") else urljoin(BASE_URL, path)
 
     async def _get_text(self, path: str, *, referer: Optional[str] = None, params: Optional[dict] = None) -> str:
-        headers = {}
+        headers = dict(DEFAULT_HEADERS)
         if referer:
             headers["Referer"] = referer
         if self.cookie:
@@ -63,7 +71,7 @@ class PowershopClient:
             return await resp.text()
 
     async def _post_text(self, url: str, data: dict, *, referer: Optional[str] = None, csrf: Optional[str] = None) -> str:
-        headers = {}
+        headers = dict(DEFAULT_HEADERS)
         if referer:
             headers["Referer"] = referer
         if csrf:
@@ -84,7 +92,7 @@ class PowershopClient:
         login_html = await self._get_text("/", referer=None)
         csrf = _extract_csrf_token(login_html)
 
-        # Best-effort login form detection: find first form with password input
+        # Best-effort login form detection: find a form containing a password input.
         soup = BeautifulSoup(login_html, "lxml")
         form = None
         for f in soup.find_all("form"):
@@ -92,7 +100,10 @@ class PowershopClient:
                 form = f
                 break
         if not form:
-            raise PowershopAuthError("Could not locate login form.")
+            raise PowershopAuthError(
+                "Could not locate login form. Powershop may be blocking non-browser clients; "
+                "try Cookie auth."
+            )
 
         action = form.get("action") or "/"
         action_url = self._url(action)

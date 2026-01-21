@@ -8,9 +8,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .client import PowershopClient
 from .const import (
-    CONF_CONSUMER_ID,
     CONF_COOKIE,
-    CONF_CUSTOMER_ID,
     CONF_EMAIL,
     CONF_PASSWORD,
     CONF_USAGE_DAYS,
@@ -38,12 +36,12 @@ class PowershopNZConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     cookie=cookie or None,
                     email=email or None,
                     password=password or None,
-                    customer_id=user_input.get(CONF_CUSTOMER_ID) or None,
-                    consumer_id=user_input.get(CONF_CONSUMER_ID) or None,
+                    customer_id=None,
+                    consumer_id=None,
                 )
                 await client.login_if_needed()
                 # Smoke test: fetch balance
-                _ = await client.fetch_balance_nzd(customer_id=client.customer_id)
+                _ = await client.fetch_balance_nzd(customer_id=None)
             except Exception:
                 errors["base"] = "cannot_connect"
             else:
@@ -52,17 +50,44 @@ class PowershopNZConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         schema = vol.Schema(
             {
+                vol.Required(CONF_EMAIL): str,
+                vol.Required(CONF_PASSWORD): str,
+                # Optional fallback if login fails in HA environment:
                 vol.Optional(CONF_COOKIE): str,
-                vol.Optional(CONF_EMAIL): str,
-                vol.Optional(CONF_PASSWORD): str,
-                vol.Optional(CONF_CUSTOMER_ID): str,
-                vol.Optional(CONF_CONSUMER_ID): str,
-                vol.Optional(CONF_USAGE_SCALE, default=DEFAULT_USAGE_SCALE): vol.In(
-                    ["day", "week", "month", "billing"]
-                ),
+                # Keep usage settings here but with sane defaults (not a wall of boxes):
+                vol.Optional(CONF_USAGE_SCALE, default=DEFAULT_USAGE_SCALE): vol.In(["day", "week", "month", "billing"]),
                 vol.Optional(CONF_USAGE_DAYS, default=DEFAULT_USAGE_DAYS): vol.Coerce(int),
             }
         )
 
         return self.async_show_form(step_id="user", data_schema=schema, errors=errors)
+
+    @staticmethod
+    def async_get_options_flow(config_entry):
+        return PowershopNZOptionsFlow(config_entry)
+
+
+class PowershopNZOptionsFlow(config_entries.OptionsFlow):
+    def __init__(self, config_entry):
+        self.config_entry = config_entry
+
+    async def async_step_init(self, user_input=None):
+        if user_input is not None:
+            return self.async_create_entry(title="", data=user_input)
+
+        # Keep options minimal: usage window & scale only (advanced IDs can be added later if needed)
+        schema = vol.Schema(
+            {
+                vol.Optional(
+                    CONF_USAGE_SCALE,
+                    default=self.config_entry.options.get(CONF_USAGE_SCALE, DEFAULT_USAGE_SCALE),
+                ): vol.In(["day", "week", "month", "billing"]),
+                vol.Optional(
+                    CONF_USAGE_DAYS,
+                    default=self.config_entry.options.get(CONF_USAGE_DAYS, DEFAULT_USAGE_DAYS),
+                ): vol.Coerce(int),
+            }
+        )
+
+        return self.async_show_form(step_id="init", data_schema=schema)
 
