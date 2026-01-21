@@ -33,6 +33,7 @@ async def async_setup_entry(
             PowershopCostWindowSensor(coordinator, entry),
             PowershopCostLastRecordSensor(coordinator, entry),
             PowershopCostMonthToDateSensor(coordinator, entry),
+            PowershopCurrentPriceSensor(coordinator, entry),
         ]
     )
 
@@ -421,4 +422,46 @@ class PowershopCostMonthToDateSensor(PowershopBaseSensor):
             return {}
         start = last_day.replace(day=1)
         return {"from": start.isoformat(), "to": last_day.isoformat()}
+
+
+class PowershopCurrentPriceSensor(PowershopBaseSensor):
+    """
+    Derived NZD/kWh price based on the latest available record.
+
+    This enables Home Assistant Energy dashboard "Use an entity with current price".
+    """
+
+    _attr_name = "Current price (estimated)"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = "NZD/kWh"
+
+    @property
+    def unique_id(self) -> str:
+        return f"{self._entry.entry_id}_price_nzd_per_kwh"
+
+    @property
+    def native_value(self) -> Optional[float]:
+        records = self.coordinator.data.usage_records or []
+        if not records:
+            return None
+        last = records[-1]
+        kwh = getattr(last, "kwh", None)
+        cost = getattr(last, "cost_nzd", None)
+        if kwh is None or cost is None:
+            return None
+        if float(kwh) <= 0:
+            return None
+        return float(cost) / float(kwh)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        records = self.coordinator.data.usage_records or []
+        if not records:
+            return {}
+        last = records[-1]
+        return {
+            "date": last.when.isoformat(),
+            "kwh": last.kwh,
+            "estimated_cost_nzd": last.cost_nzd,
+        }
 
