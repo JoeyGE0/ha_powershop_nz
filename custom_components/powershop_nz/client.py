@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, timedelta
+import logging
 from typing import List, Optional
 from urllib.parse import urljoin
 
@@ -18,6 +19,8 @@ from .parsers import (
 
 
 BASE_URL = "https://secure.powershop.co.nz"
+
+_LOGGER = logging.getLogger(__name__)
 
 DEFAULT_HEADERS = {
     # Powershop serves different HTML based on user-agent/accept headers.
@@ -135,9 +138,14 @@ class PowershopClient:
             headers["Referer"] = referer
         if self.cookie:
             headers["Cookie"] = _cookie_header_value(self.cookie)
-        async with self.session.get(self._url(path), headers=headers, params=params, timeout=30) as resp:
+        url = self._url(path)
+        _LOGGER.debug("GET %s params=%s", url, sorted((params or {}).keys()))
+        async with self.session.get(url, headers=headers, params=params, timeout=30) as resp:
             resp.raise_for_status()
-            return await resp.text()
+            text = await resp.text()
+            if "Powershop Login" in text or "<title>Powershop Login</title>" in text:
+                _LOGGER.debug("GET %s returned login HTML (likely unauthenticated)", url)
+            return text
 
     async def _post_text(self, url: str, data: dict, *, referer: Optional[str] = None, csrf: Optional[str] = None) -> str:
         headers = dict(DEFAULT_HEADERS)
@@ -147,13 +155,18 @@ class PowershopClient:
             headers["X-CSRF-Token"] = csrf
         if self.cookie:
             headers["Cookie"] = _cookie_header_value(self.cookie)
+        _LOGGER.debug("POST %s keys=%s csrf=%s", url, sorted(data.keys()), bool(csrf))
         async with self.session.post(url, data=data, headers=headers, timeout=30) as resp:
             resp.raise_for_status()
-            return await resp.text()
+            text = await resp.text()
+            if "Powershop Login" in text or "<title>Powershop Login</title>" in text:
+                _LOGGER.debug("POST %s returned login HTML (login likely failed)", url)
+            return text
 
     async def login_if_needed(self) -> None:
         # Cookie auth is the primary path; if no cookie, try email/password.
         if self.cookie:
+            _LOGGER.debug("Auth: using cookie header (not logging contents)")
             return
         if not (self.email and self.password):
             raise PowershopAuthError("Provide either cookie auth or email/password.")
@@ -162,6 +175,14 @@ class PowershopClient:
         csrf = _extract_csrf_token(login_html)
 
         action_url, hidden, email_name, pass_name = _find_login_form_and_fields(login_html)
+        _LOGGER.debug(
+            "Login form detected: action=%s hidden=%s email_field=%s pass_field=%s csrf_meta=%s",
+            action_url,
+            sorted(hidden.keys()),
+            email_name,
+            pass_name,
+            bool(csrf),
+        )
 
         payload = dict(hidden)
         payload[email_name] = self.email
@@ -211,6 +232,7 @@ class PowershopClient:
         bal = parse_balance_nzd_from_balance_html(html)
         if bal is None:
             raise PowershopError("Could not parse balance from balance HTML.")
+        _LOGGER.debug("Parsed balance successfully for customer_id=%s", cid)
         return bal
 
     async def fetch_usage_records(
@@ -246,6 +268,9 @@ class PowershopClient:
                 "scale": scale,
             },
         )
-
-        return parse_usage_csv(csv_text)
+        header = (csv_text.splitlines()[0] if csv_text else "").strip()
+        _LOGGER.debug("Usage CSV header: %s", header)
+        records = parse_usage_csv(csv_text)
+        _LOGGER.debug("Parsed %d usage records (scale=%s days=%s)", len(records), scale, days)
+        return records
 
