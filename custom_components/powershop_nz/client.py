@@ -47,6 +47,71 @@ def _extract_csrf_token(html: str) -> Optional[str]:
     return tag.get("content") if tag else None
 
 
+def _find_login_form_and_fields(html: str) -> tuple[str, dict, str, str]:
+    """
+    Return (action_url, hidden_fields, email_field_name, password_field_name).
+
+    Powershop's login markup can vary; don't rely on input type="password" being set.
+    We score forms by how likely they are to be the login form.
+    """
+    soup = BeautifulSoup(html, "lxml")
+    forms = soup.find_all("form")
+    if not forms:
+        raise PowershopAuthError("No forms found on login page.")
+
+    def get_attr(inp, key: str) -> str:
+        return (inp.get(key) or "").strip()
+
+    def looks_like_email(inp) -> bool:
+        t = get_attr(inp, "type").lower()
+        n = get_attr(inp, "name").lower()
+        i = get_attr(inp, "id").lower()
+        return t == "email" or "email" in n or "email" in i
+
+    def looks_like_password(inp) -> bool:
+        t = get_attr(inp, "type").lower()
+        n = get_attr(inp, "name").lower()
+        i = get_attr(inp, "id").lower()
+        return t == "password" or "password" in n or "password" in i or n == "pass" or i == "pass"
+
+    def score(form) -> int:
+        s = 0
+        inputs = form.find_all("input")
+        if any(looks_like_password(i) for i in inputs):
+            s += 10
+        if any(looks_like_email(i) for i in inputs):
+            s += 5
+        # bonus: presence of Rails authenticity token hidden input
+        if any(get_attr(i, "name") == "authenticity_token" for i in inputs):
+            s += 2
+        return s
+
+    form = max(forms, key=score)
+    action = (form.get("action") or "/").strip()
+    action_url = action if action.startswith("http") else urljoin(BASE_URL, action)
+
+    hidden: dict = {}
+    email_name: Optional[str] = None
+    pass_name: Optional[str] = None
+
+    for inp in form.find_all("input"):
+        name = (inp.get("name") or inp.get("id") or "").strip()
+        if not name:
+            continue
+        typ = (inp.get("type") or "").lower()
+        if typ == "hidden":
+            hidden[name] = inp.get("value") or ""
+        elif email_name is None and looks_like_email(inp):
+            email_name = name
+        elif pass_name is None and looks_like_password(inp):
+            pass_name = name
+
+    if not email_name or not pass_name:
+        raise PowershopAuthError("Could not identify email/password fields on login page.")
+
+    return action_url, hidden, email_name, pass_name
+
+
 @dataclass
 class PowershopClient:
     session: ClientSession
@@ -92,39 +157,7 @@ class PowershopClient:
         login_html = await self._get_text("/", referer=None)
         csrf = _extract_csrf_token(login_html)
 
-        # Best-effort login form detection: find a form containing a password input.
-        soup = BeautifulSoup(login_html, "lxml")
-        form = None
-        for f in soup.find_all("form"):
-            if f.find("input", attrs={"type": "password"}):
-                form = f
-                break
-        if not form:
-            raise PowershopAuthError(
-                "Could not locate login form. Powershop may be blocking non-browser clients; "
-                "try Cookie auth."
-            )
-
-        action = form.get("action") or "/"
-        action_url = self._url(action)
-
-        hidden = {}
-        email_name = None
-        pass_name = None
-        for inp in form.find_all("input"):
-            name = inp.get("name")
-            if not name:
-                continue
-            typ = (inp.get("type") or "").lower()
-            if typ == "hidden":
-                hidden[name] = inp.get("value") or ""
-            elif typ == "email" or "email" in name.lower():
-                email_name = name
-            elif typ == "password" or "pass" in name.lower():
-                pass_name = name
-
-        if not email_name or not pass_name:
-            raise PowershopAuthError("Could not identify email/password fields.")
+        action_url, hidden, email_name, pass_name = _find_login_form_and_fields(login_html)
 
         payload = dict(hidden)
         payload[email_name] = self.email
