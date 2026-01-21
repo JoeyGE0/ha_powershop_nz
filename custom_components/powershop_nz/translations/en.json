@@ -3,13 +3,24 @@
     "step": {
       "user": {
         "title": "Connect to Powershop NZ",
-        "description": "Enter email/password. If login fails in Home Assistant, use Cookie auth as a fallback.",
+        "description": "Choose how you want to authenticate.",
+        "data": {
+          "auth_method": "Authentication method"
+        }
+      },
+      "credentials": {
+        "title": "Email and password",
+        "description": "Sign in with your Powershop account.",
         "data": {
           "email": "Email",
-          "password": "Password",
-          "cookie": "Cookie header (optional fallback)",
-          "usage_scale": "Usage scale",
-          "usage_days": "Usage window (days)"
+          "password": "Password"
+        }
+      },
+      "cookie": {
+        "title": "Cookie auth",
+        "description": "Paste the Cookie header from a logged-in browser session (most reliable).",
+        "data": {
+          "cookie": "Cookie header"
         }
       }
     },
