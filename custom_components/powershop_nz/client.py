@@ -22,7 +22,11 @@ BASE_URL = "https://secure.powershop.co.nz"
 DEFAULT_HEADERS = {
     # Powershop serves different HTML based on user-agent/accept headers.
     # Use browser-like defaults so we reliably get the login form HTML.
-    "User-Agent": "Mozilla/5.0 (HomeAssistant; powershop_nz)",
+    # Note: some sites gate content based on UA; keep this very browser-like.
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
+    ),
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "en-NZ,en;q=0.9",
 }
