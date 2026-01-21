@@ -112,10 +112,15 @@ def parse_usage_csv(csv_text: str) -> List[UsageRecord]:
     f = io.StringIO(csv_text)
     sample = csv_text[:4096]
 
-    try:
-        dialect = csv.Sniffer().sniff(sample)
-    except Exception:
+    # Sniffer can mis-detect delimiter on small samples; prefer comma if header looks like CSV.
+    first_line = (csv_text.splitlines()[0] if csv_text else "")
+    if first_line.count(",") >= 2:
         dialect = csv.excel
+    else:
+        try:
+            dialect = csv.Sniffer().sniff(sample)
+        except Exception:
+            dialect = csv.excel
 
     reader = csv.DictReader(f, dialect=dialect)
     if not reader.fieldnames:

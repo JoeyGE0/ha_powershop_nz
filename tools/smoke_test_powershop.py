@@ -206,6 +206,11 @@ def login_with_email_password(session: requests.Session, email: str, password: s
 
 def main() -> int:
     ap = argparse.ArgumentParser()
+    ap.add_argument(
+        "--self-test",
+        action="store_true",
+        help="Run offline-safe self tests (no login required).",
+    )
     ap.add_argument("--cookie", help="Full Cookie header value from a logged-in browser session.")
     ap.add_argument("--email", help="Email (or set POWERSHOP_EMAIL).")
     ap.add_argument("--password", help="Password (or set POWERSHOP_PASSWORD).")
@@ -215,6 +220,63 @@ def main() -> int:
     ap.add_argument("--days", type=int, default=7)
     ap.add_argument("--show-values", action="store_true", help="Print parsed values (may be sensitive).")
     args = ap.parse_args()
+
+    if args.self_test:
+        # Public login page parsing
+        r = requests.get(
+            BASE_URL + "/",
+            headers={"User-Agent": "Mozilla/5.0", "Accept": "text/html"},
+            timeout=30,
+        )
+        if r.status_code != 200:
+            raise RuntimeError(f"Self-test: login page fetch failed HTTP {r.status_code}")
+        action_url, hidden, email_field, pass_field = _find_login_form_fields(r.text)
+        print("SELFTEST ok: login form parse")
+        print("  action_url:", action_url)
+        print("  hidden_keys:", sorted(list(hidden.keys()))[:10])
+        print("  email_field:", email_field)
+        print("  pass_field:", pass_field)
+
+        # Balance parser unit test
+        bal_html = (
+            "<html><body><div id='unit-balance-container'>"
+            "<span class='cost-info'>$123.45</span></div></body></html>"
+        )
+        bal = PARSERS.parse_balance_nzd_from_balance_html(bal_html)
+        if bal != 123.45:
+            raise RuntimeError(f"Self-test: balance parse failed (got {bal})")
+        print("SELFTEST ok: balance parser")
+
+        # Usage CSV parser unit test using Powershop-style headers we observed
+        csv_text = "Start,End,Average daily use,Estimate\n2026-01-01,2026-01-01,10.5,2.34\n"
+        recs = PARSERS.parse_usage_csv(csv_text)
+        # Debug info (safe): helps validate that we're loading the intended parsers.py
+        # and that parsing isn't being affected by delimiter sniffing.
+        # NOTE: does not print any secrets.
+        print("  parsers_file:", getattr(PARSERS, "__file__", None))
+        print("  usage_recs_len:", len(recs))
+        try:
+            import inspect
+
+            src = inspect.getsource(PARSERS.parse_usage_csv)
+            print("  parser_has_comma_heuristic:", "first_line.count" in src)
+        except Exception:
+            pass
+        try:
+            import csv as _csv
+            import io as _io
+
+            f = _io.StringIO(csv_text)
+            r = _csv.DictReader(f, dialect=_csv.excel)
+            rows = list(r)
+            print("  manual_fieldnames:", r.fieldnames)
+            print("  manual_rows_len:", len(rows))
+        except Exception:
+            pass
+        if len(recs) != 1 or recs[0].kwh != 10.5:
+            raise RuntimeError(f"Self-test: usage csv parse failed ({recs})")
+        print("SELFTEST ok: usage csv parser")
+        return 0
 
     cookie = args.cookie
     customer_id = args.customer_id

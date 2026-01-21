@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date, timedelta
 from typing import Any, Optional
 
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
@@ -24,10 +25,39 @@ async def async_setup_entry(
             PowershopUsageKwhSensor(coordinator, entry),
             PowershopUsageTodayKwhSensor(coordinator, entry),
             PowershopUsageYesterdayKwhSensor(coordinator, entry),
+            PowershopUsageWeekToDateKwhSensor(coordinator, entry),
+            PowershopUsageMonthToDateKwhSensor(coordinator, entry),
+            PowershopUsageRolling30dKwhSensor(coordinator, entry),
             PowershopCostWindowSensor(coordinator, entry),
             PowershopCostLastRecordSensor(coordinator, entry),
+            PowershopCostMonthToDateSensor(coordinator, entry),
         ]
     )
+
+
+def _last_record_date(records) -> Optional[date]:
+    if not records:
+        return None
+    last = records[-1]
+    return getattr(last, "when", None)
+
+
+def _sum_kwh(records, start: date, end_inclusive: date) -> Optional[float]:
+    vals = [
+        r.kwh
+        for r in records
+        if getattr(r, "kwh", None) is not None and start <= r.when <= end_inclusive
+    ]
+    return float(sum(vals)) if vals else None
+
+
+def _sum_cost(records, start: date, end_inclusive: date) -> Optional[float]:
+    vals = [
+        r.cost_nzd
+        for r in records
+        if getattr(r, "cost_nzd", None) is not None and start <= r.when <= end_inclusive
+    ]
+    return float(sum(vals)) if vals else None
 
 
 class PowershopBaseSensor(CoordinatorEntity[PowershopCoordinator], SensorEntity):
@@ -189,4 +219,116 @@ class PowershopCostLastRecordSensor(PowershopBaseSensor):
             return {}
         last = records[-1]
         return {"date": last.when.isoformat()}
+
+
+class PowershopUsageWeekToDateKwhSensor(PowershopBaseSensor):
+    _attr_name = "Usage (week to date)"
+    _attr_device_class = SensorDeviceClass.ENERGY
+    _attr_native_unit_of_measurement = "kWh"
+
+    @property
+    def unique_id(self) -> str:
+        return f"{self._entry.entry_id}_usage_wtd_kwh"
+
+    @property
+    def native_value(self) -> Optional[float]:
+        records = self.coordinator.data.usage_records or []
+        last_day = _last_record_date(records)
+        if not last_day:
+            return None
+        start = last_day - timedelta(days=last_day.weekday())  # Monday
+        return _sum_kwh(records, start, last_day)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        records = self.coordinator.data.usage_records or []
+        last_day = _last_record_date(records)
+        if not last_day:
+            return {}
+        start = last_day - timedelta(days=last_day.weekday())
+        return {"from": start.isoformat(), "to": last_day.isoformat()}
+
+
+class PowershopUsageMonthToDateKwhSensor(PowershopBaseSensor):
+    _attr_name = "Usage (month to date)"
+    _attr_device_class = SensorDeviceClass.ENERGY
+    _attr_native_unit_of_measurement = "kWh"
+
+    @property
+    def unique_id(self) -> str:
+        return f"{self._entry.entry_id}_usage_mtd_kwh"
+
+    @property
+    def native_value(self) -> Optional[float]:
+        records = self.coordinator.data.usage_records or []
+        last_day = _last_record_date(records)
+        if not last_day:
+            return None
+        start = last_day.replace(day=1)
+        return _sum_kwh(records, start, last_day)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        records = self.coordinator.data.usage_records or []
+        last_day = _last_record_date(records)
+        if not last_day:
+            return {}
+        start = last_day.replace(day=1)
+        return {"from": start.isoformat(), "to": last_day.isoformat()}
+
+
+class PowershopUsageRolling30dKwhSensor(PowershopBaseSensor):
+    _attr_name = "Usage (rolling 30d)"
+    _attr_device_class = SensorDeviceClass.ENERGY
+    _attr_native_unit_of_measurement = "kWh"
+
+    @property
+    def unique_id(self) -> str:
+        return f"{self._entry.entry_id}_usage_rolling_30d_kwh"
+
+    @property
+    def native_value(self) -> Optional[float]:
+        records = self.coordinator.data.usage_records or []
+        last_day = _last_record_date(records)
+        if not last_day:
+            return None
+        start = last_day - timedelta(days=29)
+        return _sum_kwh(records, start, last_day)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        records = self.coordinator.data.usage_records or []
+        last_day = _last_record_date(records)
+        if not last_day:
+            return {}
+        start = last_day - timedelta(days=29)
+        return {"from": start.isoformat(), "to": last_day.isoformat()}
+
+
+class PowershopCostMonthToDateSensor(PowershopBaseSensor):
+    _attr_name = "Estimated cost (month to date)"
+    _attr_device_class = SensorDeviceClass.MONETARY
+    _attr_native_unit_of_measurement = "NZD"
+
+    @property
+    def unique_id(self) -> str:
+        return f"{self._entry.entry_id}_cost_mtd_nzd"
+
+    @property
+    def native_value(self) -> Optional[float]:
+        records = self.coordinator.data.usage_records or []
+        last_day = _last_record_date(records)
+        if not last_day:
+            return None
+        start = last_day.replace(day=1)
+        return _sum_cost(records, start, last_day)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        records = self.coordinator.data.usage_records or []
+        last_day = _last_record_date(records)
+        if not last_day:
+            return {}
+        start = last_day.replace(day=1)
+        return {"from": start.isoformat(), "to": last_day.isoformat()}
 
