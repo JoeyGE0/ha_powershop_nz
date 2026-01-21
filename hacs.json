@@ -1,0 +1,8 @@
+{
+  "name": "Powershop NZ",
+  "content_in_root": false,
+  "domains": ["powershop_nz"],
+  "country": "NZ",
+  "homeassistant": "2023.12.0"
+}
+
