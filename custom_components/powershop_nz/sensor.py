@@ -424,7 +424,7 @@ class PowershopCostMonthToDateSensor(PowershopBaseSensor):
         return {"from": start.isoformat(), "to": last_day.isoformat()}
 
 
-class PowershopCurrentPriceSensor(PowershopBaseSensor):
+class PowershopCurrentPriceSensor(PowershopBaseSensor, RestoreEntity):
     """
     Derived NZD/kWh price based on the latest available record.
 
@@ -432,36 +432,65 @@ class PowershopCurrentPriceSensor(PowershopBaseSensor):
     """
 
     _attr_name = "Current price (estimated)"
+    _attr_device_class = SensorDeviceClass.MONETARY
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = "NZD/kWh"
+
+    def __init__(self, coordinator: PowershopCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._last_price: Optional[float] = None
 
     @property
     def unique_id(self) -> str:
         return f"{self._entry.entry_id}_price_nzd_per_kwh"
 
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        last_state = await self.async_get_last_state()
+        if last_state and last_state.state not in (None, "unknown", "unavailable"):
+            try:
+                self._last_price = float(last_state.state)
+            except ValueError:
+                self._last_price = None
+
     @property
     def native_value(self) -> Optional[float]:
         records = self.coordinator.data.usage_records or []
-        if not records:
-            return None
-        last = records[-1]
-        kwh = getattr(last, "kwh", None)
-        cost = getattr(last, "cost_nzd", None)
-        if kwh is None or cost is None:
-            return None
-        if float(kwh) <= 0:
-            return None
-        return float(cost) / float(kwh)
+        # find latest record with both kwh and cost (not necessarily the final row)
+        for r in reversed(records):
+            kwh = getattr(r, "kwh", None)
+            cost = getattr(r, "cost_nzd", None)
+            if kwh is None or cost is None:
+                continue
+            try:
+                kwh_f = float(kwh)
+                cost_f = float(cost)
+            except (TypeError, ValueError):
+                continue
+            if kwh_f <= 0:
+                continue
+            price = cost_f / kwh_f
+            self._last_price = price
+            return price
+
+        # fallback to last known value so Energy dashboard doesn't see 'unknown'
+        if self._last_price is not None:
+            return self._last_price
+
+        # final fallback: return 0.0 instead of unknown (Energy dashboard requires numeric)
+        return 0.0
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         records = self.coordinator.data.usage_records or []
         if not records:
-            return {}
+            return {"source": "none"}
+        # show latest record (even if it wasn't used for price calc)
         last = records[-1]
         return {
             "date": last.when.isoformat(),
             "kwh": last.kwh,
             "estimated_cost_nzd": last.cost_nzd,
+            "source": "last_valid_record_or_restore",
         }
 
